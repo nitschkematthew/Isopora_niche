@@ -1,0 +1,32 @@
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+sol_params <- read_csv("Soliense_data/Soliense_param_means.csv")
+sol_q <- read_csv("Soliense_data/soliense_quench_means.csv") %>%
+  select(sample_id, onemC, onemQ, PAR_factor)
+
+sol <- left_join(sol_params, sol_q, by = c("sample_id", "PAR_factor"))
+
+genus_info <- read_csv("Symportal_data/summary_genera.csv") %>%
+  mutate(c_rel = Cladocopium/(Durusdinium + Cladocopium + Breviolum + Symbiodinium))
+
+correl <- left_join(sol, genus_info, by = c("sample_id" = "sample_name"))
+
+correl %>%
+  pivot_longer(FqFm:onemQ) %>%
+  filter(Cladocopium > 0) %>%
+  #filter(PAR_factor == 500) %>%
+  filter(name == "Ek") %>%
+  #filter(sample_id != "F17") %>%
+  ggplot(aes(log(value), sqrt(c_rel))) +
+  geom_point() +
+  facet_wrap(~PAR_factor, scales = "free_x") +
+  #facet_wrap(~name, scales = "free_x") +
+  geom_smooth(method = "lm") +
+  ggpubr::stat_cor() +
+  theme(aspect.ratio = 1)
+```
+

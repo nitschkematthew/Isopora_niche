@@ -1,0 +1,336 @@
+
+# Libraries
+
+```{r}
+# Libraries for plotting and being tidy
+library(tidyverse)
+library(broom)
+library(purrr)
+library(lubridate)
+library(gt)
+theme_set(theme_bw())
+library(ggpubr)
+library(ggalt)
+library(ggrepel)
+library(patchwork)
+library(GGally)
+
+# Libraries for fitting curves
+library(nls.multstart)
+library(nlstools)
+
+# Libraries for multivariate analysis
+library(vegan)
+
+# Libraries for statistics
+library(rstatix)
+library(bestNormalize)
+library(cluster)
+library(NbClust)
+library(factoextra)
+```
+
+## Photobiology data import
+
+```{r message = FALSE, warning = FALSE}
+# file_names <- list.files("Soliense_data/", pattern = "_fit.csv", full.names = TRUE, recursive = TRUE)
+# file_paths <- file.path(file_names)
+# 
+# combined_data <- file_paths %>%
+#   map(read_csv) %>% # read in all the files, using the function read_csv() from the readr package
+#   map(select, `Source DataFile`:QBP_Size) %>% 
+#   reduce(rbind) %>%      # reduce with rbind into one dataframe
+#   filter(!str_detect(DATE, "---")) %>% # Remove the pointless line below the column names
+#   rename(sample_filename = `Source DataFile`) # Make column header R friendly
+```
+
+## Create metadata
+
+```{r}
+# meta <- data.frame(sample_filename = unique(combined_data$sample_filename)) %>%
+#    mutate(sample_id = paste0(str_remove_all(sample_filename, "\\\\"))) %>%
+#     mutate(sample_id = paste0(str_remove_all(sample_id, "C:LIFTDATAHeron_2021"))) %>%
+#       mutate(sample_id = paste0(str_remove_all(sample_id, "_Seq3"))) %>%
+#         mutate(sample_id = paste0(str_remove_all(sample_id, "_data.csv"))) %>%
+#           mutate(colony_id = str_sub(sample_id, 1, 1))
+```
+
+## Join metadaata in with data values
+
+```{r}
+# all_data <- left_join(combined_data, meta) %>%
+#   rename(PAR = Light_1, FqFm = `Fv/Fm`)
+# 
+# write_csv(all_data, "Soliense_data/all_soliense_data.csv")
+```
+
+```{r}
+all_data <- read_csv("Soliense_data/all_soliense_data.csv")
+```
+
+
+## Select only the RLC data, tidy the PAR values, and create some grouping factors
+
+```{r}
+data_rlc <- all_data %>%
+  group_by(sample_filename) %>%
+  slice(1:31) %>%
+  mutate(PAR = floor(as.numeric(PAR)),
+         PAR = ifelse(PAR < 1, 0.1, PAR)) %>% # PAR values = 0 will result in infinite values during fitting. Replace with 0.001.
+  type_convert() %>%
+  mutate(PAR_factor = factor(as.character(PAR))) %>% # Create a categorical PAR variable
+  mutate(PAR_factor = fct_relevel(PAR_factor, "0.1", "10", "25", "50", "100", "150", "250", "500", "750", "1000", "1250")) %>%
+  group_by(sample_filename) %>%
+  mutate(measurement = row_number(), # Create a measurement index
+         curve_id = group_indices()) %>% # Create a curve index
+  ungroup()
+```
+
+## Average the yields at each PAR step
+
+```{r}
+data_means <- data_rlc %>%
+  group_by(sample_filename, DATE, PAR, PAR_factor, curve_id, sample_id, colony_id) %>%
+  summarise(Fo = mean(Fo),
+            Fm = mean(Fm)) %>%
+  ungroup()
+
+# Perform sanity check for expected numbers of measurments
+sanity <- data_means %>%
+  group_by(PAR_factor) %>%
+  count()
+```
+
+## Calculate further parameters derived from F & Fm values
+
+```{r}
+data_means <- data_means %>%
+  group_by(sample_filename, DATE, curve_id, sample_id, colony_id) %>%
+  mutate(Fm = ifelse(Fm <= Fo, Fo+1, Fm), # There should not be any Fm values < F
+         FqFm = (Fm - Fo)/Fm, # Quantum yield of PSII
+         rETR = FqFm * PAR, # Relative electron transport rate
+         Fo.p = first(Fo) / (first(FqFm) + (first(Fo)/Fm)), # Fo'
+         onemC = (Fm - Fo)/(Fm - Fo.p), # [1 - C]
+         Fv.p = Fm - Fo.p, # Fv'
+         onemQ = (Fv.p/Fm)/first(FqFm)) %>% # [1 - Q]  
+  ungroup()
+
+write_csv(data_means, "Soliense_data/soliense_quench_means.csv")
+```
+
+# FqFm vs E (PAR)
+
+## Define the Hennige 2008 equation
+
+```{r}
+Hennige <- function(FqFmmax, Ek, x) {
+  model <- ((FqFmmax*Ek)*(1-exp(-x/Ek)))/x
+  return(model)
+}
+```
+
+## Fit the FqFm RLC using purrr::map across groups
+
+```{r}
+# Fit the quantum yield against the PAR_adjusted data 
+FqFmfits <- data_means %>%
+  group_by(., curve_id, colony_id, sample_id) %>%
+  nest() %>%
+  mutate(fit = purrr::map(data, ~ nls_multstart(FqFm ~ Hennige(FqFmmax, Ek, x = PAR),
+                     data = .x,
+                     iter = 250,
+                     start_lower = c(FqFmmax = 0.2, Ek = 5),
+                     start_upper = c(FqFmmax = 0.85, Ek = 1380),
+                     supp_errors = 'Y',
+                     convergence_count = 100,
+                     na.action = na.omit,
+                     lower = c(FqFmmax = 0.1, Ek = 5))))
+```
+
+## Tidy the model fits and generate conf intervals of parameters
+
+```{r}
+# get summary
+FqFminfo <- FqFmfits %>%
+  mutate(summary = map(fit, glance)) %>%
+  unnest(summary) %>%
+  select(-fit, -data)
+
+# get parameters
+FqFmparams <- FqFmfits %>%
+  mutate(., p = map(fit, tidy)) %>%
+  unnest(p) %>%
+  select(-fit, -data)
+```
+
+## Contrast RLC derived Ek vs instantaneous light curve (ILC) derived Ek
+
+```{r}
+ILC_Ek <- data_rlc %>%
+  select(sample_filename, sample_id, PAR, PAR_factor, curve_id, colony_id, FqFm, Sig, PQP_Size, Tau1QA, Tau2QA, Tau3QA, carQ, p, Ek) %>%
+  group_by(sample_filename, sample_id, colony_id, PAR, PAR_factor, curve_id) %>%
+  summarise(ILC_Ek = mean(Ek),
+            FqFm = mean(FqFm)) %>%
+  ungroup()
+
+Ek_Ek <- FqFmparams %>%
+  filter(term == "Ek") %>%
+  left_join(., ILC_Ek) %>%
+  rename(RLC_Ek = "estimate") %>%
+  mutate(Ek_Ek = ILC_Ek/RLC_Ek)
+
+mean(Ek_Ek$ILC_Ek) # 253.0758
+mean(Ek_Ek$RLC_Ek) # 260.9523
+
+
+# 250 umols is strongest correlation at R = 0.89 and almost 1:1
+
+ggplot(Ek_Ek, aes(PAR_factor, Ek_Ek)) +
+  #geom_point() +
+  #geom_boxplot() +
+  geom_hline(yintercept = 1) +
+  geom_violin() +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  #facet_wrap(~PAR_factor, nrow = 2, scales = "free") +
+  #geom_smooth(method = "lm") +
+  #geom_abline(slope = 1) +
+  ylim(c(0, 5)) +
+  #scale_fill_viridis_c(option = "magma") +
+  #ggpubr::stat_cor() +
+  theme(legend.position = "right", aspect.ratio = 1)
+
+ggplot(Ek_Ek, aes(ILC_Ek, RLC_Ek)) +
+  geom_point() +
+  facet_wrap(~PAR_factor, nrow = 2, scales = "free") +
+  geom_smooth(method = "lm") +
+  geom_abline(slope = 1) +
+  ggpubr::stat_cor() +
+  theme(legend.position = "right", aspect.ratio = 1)
+```
+
+# 1-C 1-Q
+
+```{r}
+data_means %>%
+  #group_by(colony_id, PAR) %>%
+  #summarise(onemQ = mean(onemQ), onemC = mean(onemC)) %>%
+  ggplot(aes(onemQ, onemC, group = sample_id)) +
+  geom_path(aes(colour = PAR), alpha = 0.5) +
+  geom_point(aes(colour = PAR, fill = PAR, shape = colony_id), size = 4, alpha = 0.5) +
+  #geom_abline(slope = 1) +
+  #facet_wrap(~colony_id, nrow = 1) +
+  scale_colour_viridis_c(option = "magma") +
+  scale_fill_viridis_c(option = "magma") +
+  theme(aspect.ratio = 1, legend.position = "right") +
+  scale_shape_manual(values = c(21,22,23,24,25)) +
+  #guides(fill = TRUE) +
+  xlab("[1 - Q] Non-photochemical quenching") +
+  ylab("[1 - C] Photochemical quenching")
+```
+
+# Correlations
+
+```{r}
+params <- data_rlc %>%
+    select(sample_filename, sample_id, PAR_factor, curve_id, colony_id, 
+           FqFm, Sig, PQP_Size, Tau1QA, Tau2QA, Tau3QA, carQ, p, TPQ_PSI, QBP_Size, Ek) %>%
+    group_by(sample_id, colony_id, curve_id, PAR_factor) %>%
+    summarise(FqFm = mean(FqFm),
+              Sig = mean(Sig),
+              PQP_Size = mean(PQP_Size),
+              Tau1QA = mean(Tau1QA),
+              Tau2QA = mean(Tau2QA),
+              Tau3QA = mean(Tau3QA),
+              p = mean(p),
+              carQ = mean(carQ),
+              TPQ_PSI = mean(TPQ_PSI),
+              QBP_Size = mean(QBP_Size),
+              Ek = mean(Ek)
+              ) %>%
+  ungroup() %>%
+  mutate(curve_id = as.factor(curve_id))
+
+write_csv(params, "Soliense_data/Soliense_param_means.csv")
+
+GGally::ggcorr(params %>% filter(PAR_factor == 250), label = TRUE, label_round = 2)
+```
+
+
+# Function to create a phenotype PCA
+
+```{r}
+phenotype <- function(data, PAR_level = 0.1){
+  params <- data %>%
+    filter(PAR == PAR_level) %>%
+    select(sample_filename, sample_id, PAR_factor, curve_id, colony_id, 
+           FqFm, Sig, PQP_Size, Tau1QA, Tau2QA, Tau3QA, carQ, p, TPQ_PSI, QBP_Size, Ek) %>%
+    group_by(sample_id, colony_id, curve_id) %>%
+    summarise(FqFm = mean(FqFm),
+              Sig = mean(Sig),
+              PQP_Size = mean(PQP_Size),
+              Tau1QA = mean(Tau1QA),
+              Tau2QA = mean(Tau2QA),
+              Tau3QA = mean(Tau3QA),
+              p = mean(p),
+              TPQ_PSI = mean(TPQ_PSI),
+              QBP_Size = mean(QBP_Size),
+              carQ = mean(carQ),
+              Ek = mean(Ek)
+              ) %>%
+    select(colony_id, sample_id, FqFm:Ek)
+  
+# apply bestNormalize heuristics
+  params_bn <- params
+
+  inst_transformations <- data.frame()
+  for(i in 3:ncol(params_bn)){
+  set.seed(3455)
+  dat <- params_bn %>% pull(i)
+  whichnorm <- bestNormalize(dat, standardize = FALSE)
+  #print(colnames(params_bn[i]))
+  #print(whichnorm)
+  params_bn[i] <- whichnorm$x.t
+  
+  trans <- data.frame(variable = colnames(params_bn[i]), transformation = class(whichnorm$chosen_transform))
+  inst_transformations <- rbind(inst_transformations, trans)
+  }
+  
+  rda <- params_bn %>%
+  column_to_rownames(var = "sample_id") %>%
+  select(FqFm:carQ)
+  
+# zero mean
+rda <- decostand(rda, method = "standardize")
+
+# pca
+pca <- rda(rda)
+
+# extract the scores
+scrs_samples <- as.data.frame(scores(pca, display = "sites")) %>% # Extract sample scores
+  rownames_to_column(var = "sample_id")
+scrs_params <- as.data.frame(scores(pca, display = "species")) %>% # Extract parameter scores
+  rownames_to_column(var = "params")
+
+# create plot dataframe
+plot_df <- left_join(params, scrs_samples)
+
+p <- ggplot(plot_df, aes(x = PC1, y = PC2)) +
+  geom_point(aes(fill = Ek, shape = colony_id), size = 4) +
+  geom_segment(data = scrs_params, aes(x = 0, xend = PC1, y = 0, yend = PC2), 
+               size = 0.5, arrow = arrow(length = unit(0.25, "cm")), colour = "grey") +
+  geom_text(data = scrs_params, aes(x = PC1, y = PC2, label = params), size = 4) +
+  scale_shape_manual(values = c(21,22,24,25,23)) +
+  scale_fill_viridis_c(option = "magma") +
+  theme(legend.position = "right", aspect.ratio = 1)
+
+return(p)
+}
+
+p_250 <- phenotype(data = data_rlc, PAR_level = 250)
+
+write_csv(p_250$data, "Soliense_data/250_phenotype.csv")
+```
+
+```{r}
+
+```
