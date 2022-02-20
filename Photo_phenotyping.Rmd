@@ -330,7 +330,3 @@ p_250 <- phenotype(data = data_rlc, PAR_level = 250)
 
 write_csv(p_250$data, "Soliense_data/250_phenotype.csv")
 ```
-
-```{r}
-
-```

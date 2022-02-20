@@ -104,12 +104,14 @@ profile_data <- rbind(profiles_long, residual) %>%
   
 # Create palette for profiles (this is a darker palette)
 n <- length(levels(profile_data$name))
-profile_pal = rainbow(n, s=.6, v=.6)[sample(1:n,n, replace = FALSE)]
+pro_pal <- ggsci::pal_d3(palette = "category10")
+
+profile_pal = pro_pal(n)
 names(profile_pal) <- levels(profile_data$name)
 
 # Merge the palettes and replace the non-profile sequences with grey
 all_pal <- c(seqs_pal, profile_pal)
-all_pal['non-profile sequences'] <- "#808080" 
+all_pal['non-profile sequences'] <- "#000000" 
 
 # Join profiles and sequence data together into single dataframe
 all_data <- rbind(seqs_long, profile_data)
@@ -216,7 +218,7 @@ p_bar_uni <-
 ggplot(plot_df, aes(value_rel, sample_name)) +
 geom_bar(stat = "identity", aes(fill = name, colour = name)) +
 #facet_wrap(~coral_species, nrow = 1, scales = "free_x") +
-theme(aspect.ratio = 0.8, legend.position = "bottom", axis.text.y=element_blank(), axis.ticks.y = element_blank(),
+theme(aspect.ratio = 0.8, legend.position = "left", axis.text.y=element_blank(), axis.ticks.y = element_blank(),
       axis.text.x=element_blank(), axis.ticks.x = element_blank(),
       axis.title.x = element_blank(), axis.title.y = element_blank(),
       panel.border = element_blank(), panel.grid.major = element_blank(),
@@ -224,7 +226,7 @@ panel.grid.minor = element_blank(), axis.ticks = element_blank()) +
 scale_fill_manual(values = all_pal, breaks = levels(profile_data$name)) +
 scale_colour_manual(values = all_pal, breaks = levels(profile_data$name)) +
 geom_vline(xintercept = 1, size = 1) +
-guides(fill=guide_legend(ncol=3))
+guides(fill=guide_legend(ncol=1))
 ```
 
 ```{r}

@@ -18,15 +18,18 @@ correl <- left_join(sol, genus_info, by = c("sample_id" = "sample_name"))
 correl %>%
   pivot_longer(FqFm:onemQ) %>%
   filter(Cladocopium > 0) %>%
-  #filter(PAR_factor == 500) %>%
+  filter(PAR_factor == 250) %>%
   filter(name == "Ek") %>%
+  #filter(colony_id == "F" | colony_id == "H" | colony_id == "G") %>%
   #filter(sample_id != "F17") %>%
-  ggplot(aes(log(value), sqrt(c_rel))) +
-  geom_point() +
+  ggplot(aes(value, sqrt(c_rel))) +
+  geom_point(aes(colour = colony_id)) +
   facet_wrap(~PAR_factor, scales = "free_x") +
   #facet_wrap(~name, scales = "free_x") +
   geom_smooth(method = "lm") +
   ggpubr::stat_cor() +
-  theme(aspect.ratio = 1)
+  theme(aspect.ratio = 1) +
+  xlab("Ek") +
+  ylab("Cladocopium sequences (hellinger transformed")
 ```
 
