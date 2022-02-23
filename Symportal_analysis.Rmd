@@ -70,7 +70,7 @@ names(seqs_pal) <- levels(seqs_long$name)
 
 # Read in the profile data
 profiles_raw <- read_tsv("Symportal_data/its2_type_profiles/186_20211115_03_DBV_20211116T014450.profiles.absolute.abund_and_meta.txt", skip = 6) %>%
-    select(sample_name = `X2`, `C50b-C3-C3vz-C3wa`:`D1-D1u-D4-D1jw`) %>%
+    select(sample_name = `...2`, `C50b-C3-C3vz-C3wa`:`D1-D1u-D4-D1jw`) %>%
     filter(!is.na(sample_name))
 
 profiles_long <- profiles_raw %>%
@@ -111,7 +111,7 @@ names(profile_pal) <- levels(profile_data$name)
 
 # Merge the palettes and replace the non-profile sequences with grey
 all_pal <- c(seqs_pal, profile_pal)
-all_pal['non-profile sequences'] <- "#000000" 
+all_pal['non-profile sequences'] <- "#545454"
 
 # Join profiles and sequence data together into single dataframe
 all_data <- rbind(seqs_long, profile_data)
@@ -141,6 +141,7 @@ summary_C <- seqs_long %>%
 
 write_csv(summary_C, "Symportal_data/summary_genera.csv")
 ```
+
 # Unifrac distances
 
 ```{r}
@@ -220,7 +221,8 @@ geom_bar(stat = "identity", aes(fill = name, colour = name)) +
 #facet_wrap(~coral_species, nrow = 1, scales = "free_x") +
 theme(aspect.ratio = 0.8, legend.position = "left", axis.text.y=element_blank(), axis.ticks.y = element_blank(),
       axis.text.x=element_blank(), axis.ticks.x = element_blank(),
-      axis.title.x = element_blank(), axis.title.y = element_blank(),
+      axis.title.x = element_blank(), 
+      #axis.title.y = element_blank(),
       panel.border = element_blank(), panel.grid.major = element_blank(),
 panel.grid.minor = element_blank(), axis.ticks = element_blank()) +
 scale_fill_manual(values = all_pal, breaks = levels(profile_data$name)) +

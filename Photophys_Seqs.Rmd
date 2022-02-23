@@ -30,6 +30,6 @@ correl %>%
   ggpubr::stat_cor() +
   theme(aspect.ratio = 1) +
   xlab("Ek") +
-  ylab("Cladocopium sequences (hellinger transformed")
+  ylab("Cladocopium sequences (hellinger transformed)")
 ```
 

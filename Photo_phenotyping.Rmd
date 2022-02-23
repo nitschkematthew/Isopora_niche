@@ -326,7 +326,10 @@ p <- ggplot(plot_df, aes(x = PC1, y = PC2)) +
 return(p)
 }
 
+
+phenotype(data = data_rlc, PAR_level = 0.1)
 p_250 <- phenotype(data = data_rlc, PAR_level = 250)
+p_500 <- phenotype(data = data_rlc, PAR_level = 500)
 
 write_csv(p_250$data, "Soliense_data/250_phenotype.csv")
 ```
